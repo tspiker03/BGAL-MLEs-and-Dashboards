@@ -43,7 +43,7 @@ selected_frequency = st.selectbox("Select the frequency", frequency_options)
 
 if stock_symbol:
     data = yf.download(stock_symbol, period=selected_period, interval=selected_frequency)
-    vix_data = yf.download("^VIX", period=selected_period, interval=selected_frequency)
+    vix_data = yf.download("^VXN", period=selected_period, interval=selected_frequency)
 
     if not data.empty and not vix_data.empty:
         df = pd.DataFrame(data["Close"])
