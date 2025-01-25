@@ -1,0 +1,12 @@
+LICENSE
+README.md
+setup.py
+bgal_distribution/__init__.py
+bgal_distribution/distribution.py
+bgal_distribution/gof.py
+bgal_distribution/mle.py
+bgal_distribution.egg-info/PKG-INFO
+bgal_distribution.egg-info/SOURCES.txt
+bgal_distribution.egg-info/dependency_links.txt
+bgal_distribution.egg-info/requires.txt
+bgal_distribution.egg-info/top_level.txt

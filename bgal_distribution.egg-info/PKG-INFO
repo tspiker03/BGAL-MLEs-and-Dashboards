@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: bgal-distribution
+Version: 0.1.0
+Summary: BGAL Distribution Package
+Home-page: UNKNOWN
+Author: Cline
+Author-email: cline@example.com
+License: MIT
+Description: Package for fitting and testing the Bivariate Generalized Asymmetric Laplace (BGAL) distribution.
+Platform: UNKNOWN
