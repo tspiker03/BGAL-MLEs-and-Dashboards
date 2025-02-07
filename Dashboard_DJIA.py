@@ -5,12 +5,62 @@ import numpy as np
 import statsmodels.api as sm
 from scipy.stats import gamma
 import matplotlib.pyplot as plt
+import os
+from matplotlib.backends.backend_pdf import PdfPages
 from MLE_BGAL import w, r_MLE, delta_MLE, mu_MLE
 
-st.title("Stock Price Analysis Dashboard")
+# Create media directory if it doesn't exist
+if not os.path.exists('media'):
+    os.makedirs('media')
 
-# Stock selection
-stock_symbol = st.text_input("Enter the stock ticker symbol")
+# Store figures in session state
+if 'figures' not in st.session_state:
+    st.session_state.figures = []
+
+
+def save_plots():
+    """Save all plots stored in session state"""
+    # Save as individual PNGs
+    for name, fig in st.session_state.figures:
+        filepath = os.path.join('media', f'DJI_{selected_period}_{selected_frequency}_{name}.png')
+        fig.savefig(filepath)
+    
+    # Save all plots as a single PDF
+    pdf_path = os.path.join('media', f'DJI_{selected_period}_{selected_frequency}_report.pdf')
+    with PdfPages(pdf_path) as pdf:
+        # Add title page
+        fig = plt.figure(figsize=(8.5, 11))
+        fig.clf()
+        title = f'Dow Jones Industrial Average Analysis Report\nPeriod: {selected_period}\nFrequency: {selected_frequency}'
+        plt.text(0.5, 0.5, title, transform=fig.transFigure, ha='center', va='center')
+        pdf.savefig()
+        plt.close()
+        
+        # Add summary page
+        if 'summary_data' in st.session_state:
+            fig = plt.figure(figsize=(8.5, 11))
+            fig.clf()
+            summary = st.session_state.summary_data
+            plt.text(0.5, 0.5, summary, transform=fig.transFigure, ha='center', va='center')
+            pdf.savefig()
+            plt.close()
+        
+        # Add all plots
+        for name, fig in st.session_state.figures:
+            pdf.savefig(fig)
+    
+    st.success(f"Saved {len(st.session_state.figures)} plots to media folder and generated PDF report")
+
+
+# Clear previous figures at the start of each run
+st.session_state.figures = []
+
+st.title("Stock Price Analysis Dashboard")
+st.write("Index: Dow Jones Industrial Average (^DJI)")
+st.write("Volatility Index: DJIA Volatility Index (^VXD)")
+
+# Set stock symbol
+stock_symbol = "^DJI"  # Dow Jones Industrial Average
 
 # Period selection
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
@@ -25,8 +75,10 @@ if stock_symbol:
     vix_data = yf.download("^VXD", period=selected_period, interval=selected_frequency)
 
     if not data.empty and not vix_data.empty:
-        df = pd.DataFrame(data["Close"])
-        df["Volatility"] = vix_data["Close"]
+        # Handle multi-index columns
+        df = pd.DataFrame()
+        df["Close"] = data.loc[:, ("Close", data.columns.get_level_values(1)[0])]
+        df["Volatility"] = vix_data.loc[:, ("Close", vix_data.columns.get_level_values(1)[0])]
         df["Log Returns"] = np.log(df["Close"]) - np.log(df["Close"].shift(1))
         st.subheader("Closing Price")
         st.line_chart(df["Close"])
@@ -41,24 +93,28 @@ if stock_symbol:
                 break
             diff_data = diff_data.diff().dropna()
             diff_column = f"Volatility_Diff_{i + 1}"
-            df[diff_column] = diff_data
+            df[diff_column] = np.log(diff_data)
 
-        st.subheader("ACF Plot of VIX")
-        fig, ax = plt.subplots()
-        sm.graphics.tsa.plot_acf(diff_data, lags=30, ax=ax)
-        st.pyplot(fig)
+            st.subheader("ACF Plot of ^VXD")
+            fig, ax = plt.subplots()
+            sm.graphics.tsa.plot_acf(diff_data, lags=30, ax=ax)
+            ax.set_title("Autocorrelation Function of ^VXD")
+            st.session_state.figures.append(('vix_acf', fig))
+            st.pyplot(fig)
 
         ar_model = st.number_input("Enter the AR model (integer)", min_value=1, value=1, step=1)
 
         if ar_model:
-            model_data = np.log(df[[diff_column]].dropna())
-            model = sm.tsa.AutoReg(model_data, lags=ar_model, trend="c")
-            results = model.fit()
+            # Clean and prepare data for AR model
+            model_data = df[[diff_column]].replace([np.inf, -np.inf], np.nan).dropna()
+            if len(model_data) > 0:
+                model = sm.tsa.AutoReg(model_data, lags=ar_model, trend="c")
+                results = model.fit()
             alpha = results.params[0]
             betas = results.params[1:]
 
             if ar_model == 1:
-                df.loc[model_data.index, "G"] = df.loc[model_data.index, "Volatility"] / (
+                df.loc[model_data.index, "G"] = df.loc[model_data.index, "Volatility"]/ (
                             df.loc[model_data.index, "Volatility"].shift(1) ** betas[0] * np.exp(alpha))
             else:
                 lags = list(range(1, ar_model + 1))
@@ -74,6 +130,8 @@ if stock_symbol:
             st.subheader("G QQ Plot")
             fig, ax = plt.subplots()
             sm.qqplot(g, dist=gamma(a1, loc, scale), line="45", ax=ax)
+            ax.set_title("Q-Q Plot of G vs Gamma Distribution")
+            st.session_state.figures.append(('g_qq_plot', fig))
             st.pyplot(fig)
 
             st.subheader("G versus Time")
@@ -82,13 +140,17 @@ if stock_symbol:
             st.subheader("ACF of G")
             fig, ax = plt.subplots()
             sm.graphics.tsa.plot_acf(g, lags=30, ax=ax)
+            ax.set_title("Autocorrelation Function of G")
+            st.session_state.figures.append(('g_acf', fig))
             st.pyplot(fig)
 
             st.subheader("Histogram of G")
             fig, ax = plt.subplots()
             ax.hist(g, bins=30, density=True)
+            ax.set_title("Distribution of G")
             ax.set_xlabel("G")
             ax.set_ylabel("Density")
+            st.session_state.figures.append(('g_histogram', fig))
             st.pyplot(fig)
 
             df = df[np.isfinite(df["G"])]
@@ -99,92 +161,118 @@ if stock_symbol:
             results = model.fit()
             a, c = results.params
 
-            df["Z"] = df["Log Returns"] / np.sqrt(df["G"]) - a * (1 / np.sqrt(df["G"])) - c * np.sqrt(df["G"])
+            X = df["G"].dropna().values
+            y = df["Log Returns"].dropna().values
+            delta_hat = delta_MLE(X, y)
+            mu_hat = mu_MLE(X, y, delta_hat)
+            sigma_hat = r_MLE(w(X, y, delta_hat))
+
+            size = len(df)
+            df["G~"] = np.random.gamma(a1, scale, size)
+            Z = np.random.standard_normal(size)
+            df["Y~"] = delta_hat + mu_hat * df["G~"] + sigma_hat * np.sqrt(df["G~"]) * Z
+            df["Z"] = df["Log Returns"] - delta_hat - mu_hat * (df["G~"]) - sigma_hat * np.sqrt(df["G~"])
 
             st.subheader("Z(t) QQ Plot, Error Term after fitting BGGL model")
             fig, ax = plt.subplots()
             sm.qqplot(df["Z"].dropna(), line="s", ax=ax)
+            ax.set_title("Q-Q Plot of Z(t)")
+            st.session_state.figures.append(('z_qq_plot', fig))
             st.pyplot(fig)
 
-            st.subheader("Log Returns of S&P 500 versus Time")
+            st.subheader("Log Returns of DJI versus Time")
             st.line_chart(df["Log Returns"])
 
-            st.subheader("ACF of Log Returns of S&P 500")
+            st.subheader("ACF of Log Returns of DJI")
             fig, ax = plt.subplots()
             sm.graphics.tsa.plot_acf(df["Log Returns"].dropna(), lags=30, ax=ax)
+            ax.set_title("Autocorrelation Function of Log Returns")
+            st.session_state.figures.append(('log_returns_acf', fig))
             st.pyplot(fig)
 
-            st.subheader("Histogram of Log Returns of S&P 500")
+            st.subheader("Histogram of Log Returns of DJI")
             fig, ax = plt.subplots()
             ax.hist(df["Log Returns"].dropna(), bins=30, density=True)
+            ax.set_title("Distribution of Log Returns")
             ax.set_xlabel("Log Returns")
             ax.set_ylabel("Density")
+            st.session_state.figures.append(('log_returns_histogram', fig))
             st.pyplot(fig)
 
-            st.subheader("Log Returns of S&P 500 versus G (VIX Returns)")
+            st.subheader("Log Returns versus G_t")
             fig, ax = plt.subplots()
             ax.scatter(df["G"], df["Log Returns"])
-            ax.set_xlabel("VIX Returns")
+            ax.set_title("Log Returns vs G_t")
+            ax.set_xlabel("G_t")
             ax.set_ylabel("Log Returns")
+            st.session_state.figures.append(('log_returns_vs_g', fig))
             st.pyplot(fig)
 
-            if not df.empty and "G" in df.columns and "a" in locals() and "c" in locals() and "alpha" in locals() and "betas" in locals():
-                st.subheader("Summary")
-                st.write("Gamma Distribution MLE Parameters:")
-                st.write(f"Shape (a): {a1:.4f}")
-                st.write(f"Location: {loc:.4f}")
-                st.write(f"Scale: {scale:.4f}")
+            st.subheader("Summary")
+            summary_text = f"""Gamma Distribution MLE Parameters:
+Shape (a): {a1:.4f}
+Location: {loc:.4f}
+Scale: {scale:.4f}
 
-                X = df["G"].dropna().values
-                y = df["Log Returns"].dropna().values
+Model Parameters:
+Delta_hat: {delta_hat:.4f}
+Mu_hat: {mu_hat:.4f}
+Sigma_hat: {sigma_hat:.4f}"""
 
-                delta_hat = delta_MLE(X, y)
-                mu_hat = mu_MLE(X, y, delta_hat)
-                sigma_hat = r_MLE(w(X, y, delta_hat))
+            st.text(summary_text)
+            st.session_state.summary_data = summary_text
 
-                st.write(f"Delta_hat: {delta_hat:.4f}")
-                st.write(f"Mu_hat: {mu_hat:.4f}")
-                st.write(f"Sigma_hat: {sigma_hat:.4f}")
+            st.subheader("Histogram of ^VXD~")
+            fig, ax = plt.subplots()
+            ax.hist(df["G~"].dropna(), density=True, bins=30)
+            ax.set_title("Distribution of Simulated ^VXD")
+            ax.set_xlabel("G~")
+            ax.set_ylabel("Density")
+            st.session_state.figures.append(('g_tilde_histogram', fig))
+            st.pyplot(fig)
 
-                size = len(df)
-                df["G~"] = np.random.gamma(a1, scale, size)
+            st.subheader("Histogram of Simulated BGAL")
+            fig, ax = plt.subplots()
+            ax.hist(df["Y~"].dropna(), density=True, bins=30)
+            ax.set_title("Distribution of Simulated BGAL")
+            ax.set_xlabel("Simulated BGAL")
+            ax.set_ylabel("Density")
+            st.session_state.figures.append(('y_tilde_histogram', fig))
+            st.pyplot(fig)
 
-                Z = np.random.standard_normal(size)
-                df["Y~"] = delta_hat + mu_hat * df["G~"] + sigma_hat * np.sqrt(df["G~"]) * Z
+            st.subheader("G~ versus Simulated BGAL")
+            fig, ax = plt.subplots()
+            ax.scatter(df["G~"], df["Y~"])
+            ax.set_title("Simulated BGAL vs Simulated ^VXD")
+            ax.set_xlabel("G~")
+            ax.set_ylabel("Simulated BGAL")
+            st.session_state.figures.append(('g_tilde_vs_y_tilde', fig))
+            st.pyplot(fig)
 
-                st.subheader("Histogram of VIX~")
-                fig, ax = plt.subplots()
-                ax.hist(df["G~"].dropna(), density=True, bins=30)
-                ax.set_xlabel("G~")
-                ax.set_ylabel("Density")
-                st.pyplot(fig)
+            st.subheader("QQ Plot of Log Returns vs Simulated BGAL")
+            fig, ax = plt.subplots()
+            # Sort both arrays
+            sorted_y = np.sort(df["Log Returns"].dropna())
+            sorted_y_tilde = np.sort(df["Y~"].dropna())
+            # Create QQ plot by plotting one against the other
+            ax.scatter(sorted_y, sorted_y_tilde, alpha=0.5)
+            # Add 45-degree line for reference
+            min_val = min(sorted_y.min(), sorted_y_tilde.min())
+            max_val = max(sorted_y.max(), sorted_y_tilde.max())
+            ax.plot([min_val, max_val], [min_val, max_val], 'r--', label='45° line')
+            ax.set_title("Q-Q Plot: Log Returns vs Simulated BGAL")
+            ax.set_xlabel("Sample Quantiles (Log Returns)")
+            ax.set_ylabel("Theoretical Quantiles (Simulated BGAL)")
+            ax.legend()
+            st.session_state.figures.append(('y_vs_y_tilde_qq', fig))
+            st.pyplot(fig)
 
-                st.subheader("Histogram of Y~")
-                fig, ax = plt.subplots()
-                ax.hist(df["Y~"].dropna(), density=True, bins=30)
-                ax.set_xlabel("Y~")
-                ax.set_ylabel("Density")
-                st.pyplot(fig)
-
-                st.subheader("G~ versus Y~")
-                fig, ax = plt.subplots()
-                ax.scatter(df["G~"], df["Y~"])
-                ax.set_xlabel("G~")
-                ax.set_ylabel("Y~")
-                st.pyplot(fig)
-
-                st.write("Time Series Parameters:")
-                beta_terms = []
-                for i in range(1, len(betas) + 1):
-                    beta_terms.append(f"\\beta_{{{i}}} \\cdot X(t-{i})")
-                latex_equation = "$X(t)$ = $\\alpha$ + " + " + ".join(beta_terms)
-                st.latex(latex_equation)
-
-                st.write("Coefficient Values:")
-                st.write(f"$\\alpha$: {alpha:.4f}")
-                for i, beta in enumerate(betas, start=1):
-                    st.write(f"$\\beta_{{{i}}}$: {beta:.4f}")
-
-                st.write("Regression Coefficients for Z(t):")
-                st.write(f"a: {a:.4f}")
-                st.write(f"c: {c:.4f}")
+        # Add save button at the bottom of the page
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Save All Plots"):
+                save_plots()
+        with col2:
+            if st.button("Generate PDF Report"):
+                save_plots()
+                st.success(f"PDF report generated: DJI_{selected_period}_{selected_frequency}_report.pdf")
